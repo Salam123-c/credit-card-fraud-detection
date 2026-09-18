@@ -1,30 +1,29 @@
 """
 =====================================================================
- FRAUD DETECTION - STREAMLIT LIVE DASHBOARD
+ CREDIT CARD FRAUD DETECTION - SCORING CONSOLE
 =====================================================================
  Loads  : fraud_model.joblib (from CREDIT_PROJECT.py STEP 12)
  Run    : py -m streamlit run app_streamlit.py --server.port 8501
- Open   : http://localhost:8501
 =====================================================================
 """
 
+import os
 import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Fraud Detection", page_icon="💳", layout="wide")
+st.set_page_config(page_title="Fraud Scoring Console",
+                   page_icon=None, layout="wide")
 
-import os
 BUNDLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "fraud_model.joblib")
 bundle = joblib.load(BUNDLE_PATH)
 MODEL, COLUMNS = bundle["model"], bundle["feature_columns"]
 CATEGORIES, THRESHOLD = bundle["categories"], bundle["threshold"]
 
-st.title("💳 Credit Card Fraud Detection - Live Scoring")
-st.caption(f"Model: {bundle['model_name']} | PR-AUC 0.844 (out-of-time 2020) | "
-           f"Threshold: {THRESHOLD:.2f} (tuned on validation)")
+PRIMARY = "#0F4C81"
+GREY = "#5A6472"
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -55,65 +54,109 @@ def build_features(amt, category, gender, ts, dob, lat, lon, mlat, mlon,
     return X.reindex(columns=COLUMNS, fill_value=0).astype("float32")
 
 
+# ---------------- header ----------------
+st.markdown(f"""
+<div style="border-bottom:2px solid {PRIMARY}; padding-bottom:10px; margin-bottom:5px">
+  <h2 style="color:{PRIMARY}; margin:0; font-weight:600;">
+      Transaction Fraud Scoring Console</h2>
+</div>
+<p style="color:{GREY}; font-size:0.9rem; margin-top:8px;">
+  Model: XGBoost &nbsp;|&nbsp; Validation: PR-AUC 0.844 (out-of-time, 2020)
+  &nbsp;|&nbsp; Decision threshold: {THRESHOLD:.2f} (tuned on validation set)
+  &nbsp;|&nbsp; Training data: synthetic (Sparkov)
+</p>
+""", unsafe_allow_html=True)
+
 # ---------------- sidebar: transaction input ----------------
-st.sidebar.header("Transaction Details")
-c1, c2 = st.sidebar.columns(2)
-amt = c1.number_input("Amount ($)", 1.0, 50000.0, 120.0, step=5.0)
-category = c2.selectbox("Category", CATEGORIES)
-gender = c1.radio("Gender", ["M", "F"], horizontal=True)
-d = c2.date_input("Date", value=pd.Timestamp("2020-06-15").date())
-t = c2.time_input("Time", value=pd.Timestamp("14:30").time())
-ts = pd.Timestamp(f"{d} {t}")
+with st.sidebar.form("transaction_form"):
+    st.subheader("Transaction Parameters")
+    c1, c2 = st.columns(2)
+    amt = c1.number_input("Amount (USD)", 1.0, 50000.0, 120.0, step=5.0)
+    category = c2.selectbox("Merchant category", CATEGORIES)
+    gender = c1.radio("Cardholder gender", ["M", "F"], horizontal=True)
+    d = c2.date_input("Transaction date", value=pd.Timestamp("2020-06-15").date())
+    t = c2.time_input("Transaction time", value=pd.Timestamp("14:30").time())
+    ts = pd.Timestamp(f"{d} {t}")
 
-st.sidebar.subheader("Location")
-c3, c4 = st.sidebar.columns(2)
-lat, lon = c3.number_input("Card lat", 24.0, 50.0, 40.7), c4.number_input("Card long", -125.0, -66.0, -74.0)
-mlat, mlon = c3.number_input("Merch lat", 24.0, 50.0, 40.75), c4.number_input("Merch long", -125.0, -66.0, -73.98)
-city_pop = st.sidebar.number_input("City population", 10, 25_000_000, 100_000)
+    st.subheader("Geography")
+    c3, c4 = st.columns(2)
+    lat = c3.number_input("Cardholder latitude", 24.0, 50.0, 40.7)
+    lon = c4.number_input("Cardholder longitude", -125.0, -66.0, -74.0)
+    mlat = c3.number_input("Merchant latitude", 24.0, 50.0, 40.75)
+    mlon = c4.number_input("Merchant longitude", -125.0, -66.0, -73.98)
+    city_pop = st.number_input("Cardholder city population", 10, 25_000_000, 100_000)
 
-st.sidebar.subheader("Card History (velocity)")
-c5, c6 = st.sidebar.columns(2)
-t_prev = c5.number_input("Hrs since prev tx", 0.0, 500.0, 20.0)
-tx_seq = c6.number_input("Tx count so far", 1, 5000, 300)
-prev_avg = st.sidebar.number_input("Card avg amount ($)", 1.0, 10000.0, 50.0)
-job_freq = st.sidebar.slider("Job frequency", 1, 5000, 500)
-state_freq = st.sidebar.slider("State frequency", 100, 100_000, 20_000)
-dob = st.sidebar.date_input("Cardholder DOB", value=pd.Timestamp("1990-05-10").date())
+    st.subheader("Card History")
+    c5, c6 = st.columns(2)
+    t_prev = c5.number_input("Hours since previous transaction", 0.0, 500.0, 20.0)
+    tx_seq = c6.number_input("Transaction sequence on card", 1, 5000, 300)
+    prev_avg = st.number_input("Card average amount (USD)", 1.0, 10000.0, 50.0)
+    job_freq = st.slider("Occupation frequency encoding", 1, 5000, 500)
+    state_freq = st.slider("State frequency encoding", 100, 100_000, 20_000)
+    dob = st.date_input("Cardholder date of birth",
+                        value=pd.Timestamp("1990-05-10").date())
+    submitted = st.form_submit_button("Score Transaction", type="primary",
+                                      use_container_width=True)
 
-# ---------------- predict ----------------
-if st.sidebar.button("🔍 Score Transaction", type="primary", use_container_width=True):
+# ---------------- results ----------------
+if submitted:
     X = build_features(amt, category, gender, ts, pd.Timestamp(dob),
                        lat, lon, mlat, mlon, city_pop, job_freq,
                        state_freq, t_prev, tx_seq, prev_avg)
     prob = float(MODEL.predict_proba(X)[:, 1][0])
 
     if prob >= THRESHOLD:
-        decision, color = "🚫 DECLINE / REVIEW", "red"
+        decision, rationale = "DECLINE - ROUTE TO FRAUD REVIEW", (
+            "Score exceeds the validated decision threshold.")
+        banner_bg, banner_tx = "#8B1A1A", "#FFFFFF"
     elif prob >= THRESHOLD * 0.5:
-        decision, color = "👀 MANUAL REVIEW", "orange"
+        decision, rationale = "MANUAL REVIEW", (
+            "Score falls in the grey zone; refer to analyst queue.")
+        banner_bg, banner_tx = "#B8860B", "#FFFFFF"
     else:
-        decision, color = "✅ ALLOW", "green"
+        decision, rationale = "APPROVE", (
+            "Score is comfortably below the decision threshold.")
+        banner_bg, banner_tx = "#1A6B3C", "#FFFFFF"
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns([1, 1.2], gap="large")
+
     with col1:
+        st.markdown(f"""
+        <div style="background:{banner_bg}; color:{banner_tx}; padding:20px;
+                    border-radius:4px; text-align:center;">
+          <div style="font-size:0.75rem; letter-spacing:2px;">DECISION</div>
+          <div style="font-size:1.4rem; font-weight:600; margin-top:6px;">{decision}</div>
+          <div style="font-size:0.8rem; margin-top:8px; opacity:0.9;">{rationale}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
         st.metric("Fraud Probability", f"{prob*100:.2f}%")
-        st.markdown(f"### Decision: :{color}[{decision}]")
-        st.progress(min(prob / max(THRESHOLD, 0.01), 1.0))
-        st.caption(f"Flags at ≥ {THRESHOLD:.2f} (validation-tuned)")
+        st.caption(f"Decision boundary: {THRESHOLD:.2f} "
+                   f"(grey zone from {THRESHOLD*0.5:.2f})")
 
     with col2:
-        st.subheader("Top reasons (SHAP)")
+        st.markdown("**Primary Risk Drivers** (SHAP contribution to log-odds)")
         if hasattr(MODEL, "get_booster"):
             import xgboost as xgb
-            contribs = MODEL.get_booster().predict(xgb.DMatrix(X), pred_contribs=True)[0][:-1]
+            contribs = MODEL.get_booster().predict(
+                xgb.DMatrix(X), pred_contribs=True)[0][:-1]
             idx = np.argsort(-np.abs(contribs))[:3]
+            rows = []
             for i in idx:
-                arrow = "⬆️ increases fraud risk" if contribs[i] > 0 else "⬇️ decreases fraud risk"
-                st.write(f"**{COLUMNS[i]}** ({contribs[i]:+.2f}) — {arrow}")
-        else:
-            st.write("Reasons available with XGBoost model only.")
+                direction = ("Increases risk" if contribs[i] > 0
+                             else "Decreases risk")
+                rows.append({"Feature": COLUMNS[i],
+                             "Contribution": f"{contribs[i]:+.2f}",
+                             "Effect": direction})
+            st.table(pd.DataFrame(rows))
 
-    st.info("⚠️ Synthetic Sparkov data par trained hai — production metrics lower honge.")
+    st.markdown("---")
+    st.caption("Note: model trained on synthetic transaction data. "
+               "Production performance will differ; scores should inform, "
+               "not replace, analyst review.")
 else:
-    st.info("Sidebar mein transaction details bharo aur 'Score Transaction' dabao — "
-            "ya raat 2 baje $900 ki shopping_net transaction try karo 😉")
+    st.info("Enter transaction parameters in the left panel and submit "
+            "to generate a risk assessment.")
+
+st.sidebar.markdown("---")
+st.sidebar.caption("Fraud Scoring Console v1.0")
