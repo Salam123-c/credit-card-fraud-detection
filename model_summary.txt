@@ -1,0 +1,132 @@
+
+====================================================================
+ STEP 1: LOAD + REALITY CHECK
+====================================================================
+Rows: 1,296,675 | Columns: 15
+Memory: 530 MB
+Time range: 2019-01-01 00:00:18  ->  2020-06-21 12:13:37
+Fraud rate: 0.579%  (7,506 fraud / 1,296,675 total)
+Missing values (top 5): {'trans_date_trans_time': 0, 'cc_num': 0, 'category': 0, 'amt': 0, 'gender': 0}
+
+====================================================================
+ STEP 2: EDA - FRAUD FINGERPRINT
+====================================================================
+Fraud rate night (22-06h): 1.33%  vs  day (07-21h): 0.11%
+  -> night is 11.6x riskier (classic card-theft pattern)
+Top fraud categories:
+                   mean   sum
+category                     
+shopping_net   0.017561  1713
+misc_net       0.014458   915
+grocery_pos    0.014098  1743
+shopping_pos   0.007225   843
+gas_transport  0.004694   618
+Amount median - fraud: $397  |  legit: $47
+
+====================================================================
+ STEP 3: CLEANING + PII REMOVAL
+====================================================================
+Dropped (PII/ID/leakage): ['Unnamed: 0', 'trans_num', 'first', 'last', 'street', 'zip', 'merch_zipcode', 'city', 'merchant']
+Added: hour, dayofweek, month, is_night, age, job_freq, state_freq
+
+====================================================================
+ STEP 4: FEATURE ENGINEERING
+====================================================================
+Added: distance_km, amt_log1p, time_since_prev_h, tx_seq,
+       card_prev_avg_amt, amt_vs_card_avg (card-behavior velocity)
+distance_km  fraud median: 77.9 km | legit median: 78.2 km
+
+====================================================================
+ STEP 5: SCREENING: IV / WOE + VIF
+====================================================================
+Information Value per feature (predictive power):
+  IV  amt                    4.084   [SUSPICIOUS(leakage?)]
+  IV  amt_log1p              4.084   [SUSPICIOUS(leakage?)]
+  IV  hour                   1.635   [SUSPICIOUS(leakage?)]
+  IV  dayofweek              0.025   [weak]
+  IV  month                  0.055   [weak]
+  IV  age                    0.066   [weak]
+  IV  distance_km            0.001   [useless]
+  IV  city_pop               0.005   [useless]
+  IV  time_since_prev_h      0.493   [STRONG]
+  IV  tx_seq                 0.285   [medium]
+  IV  card_prev_avg_amt      0.237   [medium]
+  IV  amt_vs_card_avg        2.346   [SUSPICIOUS(leakage?)]
+  IV  job_freq               0.096   [weak]
+  IV  state_freq             0.003   [useless]
+  IV  is_night               1.521   [SUSPICIOUS(leakage?)]
+
+VIF (redundancy; >10 = remove one of the pair) on numeric core:
+amt_log1p            1.4
+amt_vs_card_avg      1.4
+hour                 1.1
+age                  1.0
+time_since_prev_h    1.0
+distance_km          1.0
+Note: amt vs amt_log1p are kept apart - scorecard uses log version only.
+
+====================================================================
+ STEP 6: TEMPORAL SPLIT + MODELS
+====================================================================
+NaN/inf remaining in X: 0
+Train (Jan-Oct 2019):   713,369 rows, fraud 0.594%
+Valid (Nov-Dec 2019):   211,481 rows, fraud 0.463%
+TEST  (Jan-Dec 2020):   371,825 rows, fraud 0.615%
+
+====================================================================
+ STEP 7: METRICS - PR-AUC / GINI / KS / PRECISION@K / $-RECALL
+====================================================================
+(PR-AUC = primary metric; ROC/Gini/KS = reporting metrics)
+LogReg       PR-AUC 0.294 | ROC 0.960 (Gini 0.920) | KS 0.794 | precision@500 0.212 | $-recall@top 70.6%
+XGBoost      PR-AUC 0.844 | ROC 0.994 (Gini 0.987) | KS 0.918 | precision@500 1.000 | $-recall@top 79.7%
+PR-AUC uplift (XGBoost vs LogReg): +0.550 95% CI [+0.533, +0.567] -> REAL
+
+====================================================================
+ STEP 8: THRESHOLD TUNING ON VALID + BUSINESS VIEW
+====================================================================
+Best threshold on VALIDATION: 0.675 (F1 0.837)
+Confusion @ threshold: TP 1,461 | FP 65 (false alarms) | FN 825 (missed fraud)
+Precision 0.957 | Recall 0.639
+Missed fraud value: $399,266 | Blocked legit customers: 65
+
+====================================================================
+ STEP 7.5: VISUALIZATIONS (PNG)
+====================================================================
+Top 5 features: is_night (0.224), amt_log1p (0.183), cat_gas_transport (0.079), cat_food_dining (0.065), cat_shopping_pos (0.053)
+Saved: model_curves.png, eda_fraud_patterns.png, feature_importance.png, confusion_matrix.png
+
+====================================================================
+ STEP 9: BIAS AUDIT
+====================================================================
+        flag_rate  real_fraud
+gender                       
+F          0.0037      0.0058
+M          0.0046      0.0066
+
+        flag_rate  real_fraud
+agegrp                       
+18-30      0.0037      0.0049
+31-50      0.0024      0.0052
+51+        0.0066      0.0080
+
+
+====================================================================
+ STEP 10: PSI - TRAIN vs 2020 TEST
+====================================================================
+  PSI amt_log1p      0.0001  [stable]
+  PSI hour           0.0000  [stable]
+  PSI distance_km    0.0000  [stable]
+  PSI age            0.0046  [stable]
+
+====================================================================
+ STEP 11: SUMMARY + LIMITATIONS (model documentation)
+====================================================================
+Champion model : XGBoost
+Primary metric : PR-AUC (test 2020, out-of-time)
+Limitations to disclose:
+  1. Synthetic Sparkov data - real-world metrics will be lower.
+  2. Labels are instant here; production fraud labels arrive after
+     chargebacks (weeks) - label latency is a known constraint.
+  3. Velocity features are cumulative-history proxies; a live system
+     needs true rolling windows computed identically at serving time
+     (training-serving skew risk).

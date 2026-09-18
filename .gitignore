@@ -1,0 +1,11 @@
+# Data file 109 MB hai - GitHub ki 100 MB limit se bada hai
+# Download link README mein diya hai
+credit_card_transactions.parquet
+
+# Python artifacts
+__pycache__/
+*.pyc
+
+# Scratch
+_inspect_sample.py
+top_500_rows.xlsx
