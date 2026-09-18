@@ -23,7 +23,9 @@ from datetime import datetime
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-BUNDLE_PATH = r"C:/Users/hp/Desktop/PRO_1_10/CREDIT/fraud_model.joblib"
+import os
+BUNDLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fraud_model.joblib")
 
 bundle = joblib.load(BUNDLE_PATH)
 MODEL = bundle["model"]

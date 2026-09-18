@@ -15,7 +15,9 @@ import streamlit as st
 
 st.set_page_config(page_title="Fraud Detection", page_icon="💳", layout="wide")
 
-BUNDLE_PATH = r"C:/Users/hp/Desktop/PRO_1_10/CREDIT/fraud_model.joblib"
+import os
+BUNDLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "fraud_model.joblib")
 bundle = joblib.load(BUNDLE_PATH)
 MODEL, COLUMNS = bundle["model"], bundle["feature_columns"]
 CATEGORIES, THRESHOLD = bundle["categories"], bundle["threshold"]
